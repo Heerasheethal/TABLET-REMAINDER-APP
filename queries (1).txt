@@ -1,0 +1,21 @@
+create table medical(lastupdate timestamp on update current_timestamp,
+p1 int,p2 int,p3 int,t1 int,t2 int,t3 int,balance1 int,balance2 int,balance3
+ int)
+
+insert into medical(p1,p2,p3,t1,t2,t3,balance1,balance2,balance3) 
+values(1,1,1,0,0,0,1,1,1)
+
+
+
+update medical set p1=,p2=,p3=,t1=,t2=,t3=,balance1=,balance2=,balance3= 
+
+
+create table caretaker(name varchar(20),phno varchar(13))
+
+create table patient(name varchar(20),phno varchar(13),age int,address varchar(40),
+minterval int,mt varchar(20),at varchar(20),nt varchar(20))
+insert into patient values('','','','','','','','')
+
+
+
+

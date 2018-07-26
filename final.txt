@@ -1,0 +1,842 @@
+#include <LiquidCrystal.h>
+#include <EEPROM.h>
+#include <Wire.h>
+#include <MenuBackend.h>
+
+String data;
+// This is the RealTimeModule address.
+#define DS1307 0x68  
+ 
+//Initialize LCD.
+LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
+ 
+// Initialize values for timekeeping.
+byte second = 0;
+byte minute = 0;
+byte hour = 0;
+byte weekday = 0;
+byte monthday = 0;
+byte month = 0;
+byte year = 0;
+ 
+//Initialize values for alarms.
+byte minsB1 = 0, hourB1 = 0, lastB1mins = 0, lastB1hour = 0;
+byte minsB2 = 0, hourB2 = 0, lastB2mins = 0, lastB2hour = 0;
+byte minsB3 = 0, hourB3 = 0, lastB3mins = 0, lastB3hour = 0;
+bool b1 = true, b2 = true, b3 = true;
+
+byte minsa1 = 0, houra1 = 0; 
+byte minsa2 = 0, houra2 = 0;
+byte minsa3 = 0, houra3 = 0;
+
+byte minsb1 = 0, hourb1 = 0; 
+byte minsb2 = 0, hourb2 = 0;
+byte minsb3 = 0, hourb3 = 0;
+
+byte minsc1 = 0, hourc1 = 0; 
+byte minsc2 = 0, hourc2 = 0;
+byte minsc3 = 0, hourc3 = 0;
+
+//Define photoresistor values.
+int bottle1    = 0;
+int bottle2    = 0;
+int bottle3    = 0;
+int lastBottle = 0;
+int bottleReset = 0;
+int curr = 0;
+ 
+// Define keypad values.
+#define btnRIGHT  0
+#define btnUP     1
+#define btnDOWN   2
+#define btnLEFT   3
+#define btnSELECT 4
+#define btnNONE   5
+int lcd_key = 0;
+int adc_key_in = 0;
+ 
+//Define memory locations for the EEPROM.
+#define ONE_PERIOD 0
+#define ONE_PILLS 1
+#define ONE_HOURS 2
+#define ONE_MINUTES 3
+
+
+#define TWO_PERIOD 4
+#define TWO_PILLS 5
+#define TWO_HOURS 6
+#define TWO_MINUTES 7
+
+#define THREE_PERIOD 8
+#define THREE_PILLS 9
+#define THREE_HOURS 10
+#define THREE_MINUTES 11
+
+#define BAL1 12
+#define BAL2 13
+#define BAL3 14
+ 
+ 
+// Read keypad buttons.
+int read_LCD_buttons(){
+ adc_key_in = analogRead(A0);
+ //Debounce time.
+ delay(100);
+ //Correction for value drifting.
+ int k = (analogRead(A0) - adc_key_in);
+ if(5 < abs(k)) { return btnNONE;}
+ if (adc_key_in == 854) return btnNONE;
+ if (adc_key_in == 820)   return btnRIGHT;
+ if (adc_key_in == 770)  return btnUP;
+ if (adc_key_in == 511)  return btnDOWN;
+ if (adc_key_in == 0)  return btnLEFT;
+ if (adc_key_in == 684)  return btnSELECT;
+ return btnNONE;
+}
+
+
+ 
+//Menu variables.
+MenuBackend menu = MenuBackend(menuUsed,menuChanged);
+  //initialize menuitems
+  MenuItem setupMode = MenuItem("setupMode");
+    MenuItem setupHours = MenuItem("setupHours");
+    MenuItem setupMinutes = MenuItem("setupMinutes");
+    MenuItem setupDispenser = MenuItem("setupDispenser");
+      MenuItem B1Dispenser = MenuItem("B1Dispenser");
+      MenuItem B2Dispenser = MenuItem("B2Dispenser");
+      MenuItem B3Dispenser = MenuItem("B3Dispenser");
+      MenuItem B1hours = MenuItem("B1hours");
+      MenuItem B1minutes = MenuItem("B1minutes");
+      MenuItem B1interval = MenuItem("B1interval");
+      MenuItem B1pills = MenuItem("B1pills");
+      MenuItem B1count = MenuItem("B1count");
+      MenuItem B2hours = MenuItem("B2hours");
+      MenuItem B2minutes = MenuItem("B2minutes");
+      MenuItem B2interval = MenuItem("B2interval");
+      MenuItem B2pills = MenuItem("B2pills");
+      MenuItem B2count = MenuItem("B2count");
+      MenuItem B3hours = MenuItem("B3hours");
+      MenuItem B3minutes = MenuItem("B3minutes");
+      MenuItem B3interval = MenuItem("B3interval");
+      MenuItem B3pills = MenuItem("B3pills");   
+      MenuItem B3count = MenuItem("B3count");       
+ 
+void setup(){
+  //Wire handles communication with RTM.
+  Wire.begin();
+  //Serial is used for debugging purposes.
+  Serial.begin(9600);
+  //LCD is main output.
+  lcd.begin(16, 2);
+   //Set pins for LEDs.
+  pinMode(7,OUTPUT);//yled
+  pinMode(6,INPUT_PULLUP);//ysw
+  pinMode(5,OUTPUT);//gled
+  pinMode(4,INPUT_PULLUP);//gsw
+  pinMode(3,OUTPUT);//rled
+  pinMode(2,INPUT_PULLUP);//rsw
+  pinMode(A1,OUTPUT);//m1
+  pinMode(A2,OUTPUT);//m2
+  pinMode(A3,OUTPUT);//m3
+  //analogWrite(10, 100);
+  //Setup menu.
+  menu.getRoot().add(setupMode);
+  setupMode.add(setupDispenser).addRight(setupHours).addRight(setupMinutes);
+    setupDispenser.add(B1Dispenser).addRight(B2Dispenser).addRight(B3Dispenser);
+    B1Dispenser.add(B1hours).addRight(B1minutes).addRight(B1interval).addRight(B1pills).addRight(B1count);
+    B2Dispenser.add(B2hours).addRight(B2minutes).addRight(B2interval).addRight(B2pills).addRight(B2count);
+    B3Dispenser.add(B3hours).addRight(B3minutes).addRight(B3interval).addRight(B3pills).addRight(B3count);
+  menu.toRoot();
+ 
+  //Test EEPROM memory.
+  //EEPROM.write(ONE_PERIOD, (char)1);//0,1
+  EEPROM.write(ONE_PILLS, (char)1);//1,1
+  //EEPROM.write(ONE_HOURS, (char)1);//1,1
+  //EEPROM.write(ONE_MINUTES, (char)1);//1,1
+  //EEPROM.write(TWO_PERIOD, (char)1);//2,1
+  EEPROM.write(TWO_PILLS, (char)2);//3,2
+  //EEPROM.write(TWO_HOURS, (char)1);//1,1
+  //EEPROM.write(TWO_MINUTES, (char)1);//1,1
+  //EEPROM.write(THREE_PERIOD, (char)1);//4,1
+  EEPROM.write(THREE_PILLS, (char)3);//5,3
+  //EEPROM.write(THREE_HOURS, (char)1);//1,1
+  //EEPROM.write(THREE_MINUTES, (char)1);//1,1
+  //EEPROM.write(BAL1, (char)1);//0,1
+  //EEPROM.write(BAL2, (char)1);//1,1
+  //EEPROM.write(BAL3, (char)1);//2,1
+}
+ 
+void loop(){
+  //Check alarms for each bottle.
+  checkAlarms();
+ 
+  //Manage GUI.
+  if(menu.getCurrent().getName() == menu.getRoot()){
+    readTime();
+    mainMenuAction();
+  }else if(menu.getCurrent().getName() == "setupHours" || menu.getCurrent().getName() == "setupMinutes"){
+    printTime();
+  }else if(menu.getCurrent().getName() == "B1hours"){
+    printNumber(EEPROM.read(ONE_HOURS));//0,1
+  }else if(menu.getCurrent().getName() == "B1minutes"){
+    printNumber(EEPROM.read(ONE_MINUTES));//0,1
+  }else if(menu.getCurrent().getName() == "B1interval"){
+    printNumber(EEPROM.read(ONE_PERIOD));//0,1
+  }else if(menu.getCurrent().getName() == "B1pills"){
+    printNumber(EEPROM.read(ONE_PILLS));//1,1
+  }else if(menu.getCurrent().getName() == "B1count"){
+    printNumber(EEPROM.read(BAL1));//1,1
+  }else if(menu.getCurrent().getName() == "B2hours"){
+    printNumber(EEPROM.read(TWO_HOURS));//0,1
+  }else if(menu.getCurrent().getName() == "B2minutes"){
+    printNumber(EEPROM.read(TWO_MINUTES));//0,1
+  }else if(menu.getCurrent().getName() == "B2interval"){
+    printNumber(EEPROM.read(TWO_PERIOD));//2,1
+  }else if(menu.getCurrent().getName() == "B2pills"){
+    printNumber(EEPROM.read(TWO_PILLS));//3,2
+  }else if(menu.getCurrent().getName() == "B2count"){
+    printNumber(EEPROM.read(BAL2));//1,1
+  }else if(menu.getCurrent().getName() == "B3hours"){
+    printNumber(EEPROM.read(THREE_HOURS));//0,1
+  }else if(menu.getCurrent().getName() == "B3minutes"){
+    printNumber(EEPROM.read(THREE_MINUTES));//0,1
+  }else if(menu.getCurrent().getName() == "B3interval"){
+    printNumber(EEPROM.read(THREE_PERIOD));//4,1
+  }else if(menu.getCurrent().getName() == "B3pills"){
+    printNumber(EEPROM.read(THREE_PILLS));//5,3
+  }else if(menu.getCurrent().getName() == "B3count"){
+    printNumber(EEPROM.read(BAL3));//1,1
+  }else{
+    lcd.setCursor(0,0);
+    lcd.print("                ");
+  }
+ 
+  //Respond to user input (through pushbuttons)
+  lcd_key = read_LCD_buttons();
+  navigateMenus();
+  
+}
+ 
+void navigateMenus(){
+  MenuItem currentMenu=menu.getCurrent();
+ 
+  switch (lcd_key)
+   {
+     case btnRIGHT:
+       {
+       menu.moveRight();
+       break;
+       }
+     case btnLEFT:
+       {
+       menu.moveLeft();
+       break;
+       }
+     case btnUP:
+       {
+        if(currentMenu.getName() == "setupHours"){
+          hour++;
+          if(hour>23){hour=0;}
+          setTime();
+        }else if(currentMenu.getName() == "setupMinutes"){
+          minute++;
+          if(minute>59){minute=0;}
+          setTime();
+        }else if(currentMenu.getName() == "B1hours"){
+         char newVal = EEPROM.read(ONE_HOURS);//1,1
+          newVal = newVal + 1;
+          if(newVal > 23){ newVal = 0;}
+          EEPROM.write(ONE_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B1minutes"){
+          char newVal = EEPROM.read(ONE_MINUTES);//1,1
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(ONE_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B1pills"){
+          char newVal = EEPROM.read(ONE_PILLS);//1,1
+          newVal = newVal + 1;
+          if(newVal > 10){ newVal = 0;}
+          EEPROM.write(ONE_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B1interval"){
+          char newVal = EEPROM.read(ONE_PERIOD);//0,1
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(ONE_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B1count"){
+          char newVal = EEPROM.read(BAL1);//0,1
+          newVal = newVal + 1;
+          if(newVal > 89){ newVal = 0;}
+          EEPROM.write(BAL1, (char)newVal);
+        }else if(currentMenu.getName() == "B2pills"){
+          char newVal = EEPROM.read(TWO_PILLS);//3,2
+          newVal = newVal + 1;
+          if(newVal > 10){ newVal = 0;}
+          EEPROM.write(TWO_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B2hours"){
+          char newVal = EEPROM.read(TWO_HOURS);//1,1
+          newVal = newVal + 1;
+          if(newVal > 23){ newVal = 0;}
+          EEPROM.write(TWO_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B2minutes"){
+         char newVal = EEPROM.read(TWO_MINUTES);//1,1
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(TWO_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B2interval"){
+          char newVal = EEPROM.read(TWO_PERIOD);//2,1
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(TWO_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B2count"){
+          char newVal = EEPROM.read(BAL2);//0,1
+          newVal = newVal + 1;
+          if(newVal > 89){ newVal = 0;}
+          EEPROM.write(BAL2, (char)newVal);
+        }else if(currentMenu.getName() == "B3pills"){
+          char newVal = EEPROM.read(THREE_PILLS);
+          newVal = newVal + 1;
+          if(newVal > 10){ newVal = 0;}
+          EEPROM.write(THREE_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B3hours"){
+          char newVal = EEPROM.read(THREE_HOURS);//1,1
+          newVal = newVal + 1;
+          if(newVal > 23){ newVal = 0;}
+          EEPROM.write(THREE_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B3minutes"){
+         char newVal = EEPROM.read(THREE_MINUTES);//1,1
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(THREE_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B3interval"){
+          char newVal = EEPROM.read(THREE_PERIOD);
+          newVal = newVal + 1;
+          if(newVal > 59){ newVal = 0;}
+          EEPROM.write(THREE_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B3count"){
+          char newVal = EEPROM.read(BAL3);//0,1
+          newVal = newVal + 1;
+          if(newVal > 89){ newVal = 0;}
+          EEPROM.write(BAL3, (char)newVal);
+        }else if(currentMenu.getName() == menu.getRoot()){
+          if(bottleReset == 1){
+            hourB1 = lastB1hour;
+            minsB1 = lastB1mins;
+           
+          }
+        }
+       break;
+       }
+     case btnDOWN:
+       {
+        if(currentMenu.getName() == "setupHours"){
+          hour--;
+          if(hour<0){hour=23;}
+          setTime();
+        }else if(currentMenu.getName() == "setupMinutes"){
+          minute--;
+          if(minute<0){minute=59;}
+          setTime();
+        }else if(currentMenu.getName() == "B1pills"){
+          char newVal = EEPROM.read(ONE_PILLS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 10;}
+          EEPROM.write(ONE_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B1hours"){
+         char newVal = EEPROM.read(ONE_HOURS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 23;}
+          EEPROM.write(ONE_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B1minutes"){
+         char newVal = EEPROM.read(ONE_MINUTES);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(ONE_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B1interval"){
+          char newVal = EEPROM.read(ONE_PERIOD);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(ONE_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B1count"){
+          char newVal = EEPROM.read(BAL1);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 89;}
+          EEPROM.write(BAL1, (char)newVal);
+        }else if(currentMenu.getName() == "B2pills"){
+          char newVal = EEPROM.read(TWO_PILLS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 10;}
+          EEPROM.write(TWO_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B2hours"){
+         char newVal = EEPROM.read(TWO_HOURS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 23;}
+          EEPROM.write(TWO_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B2minutes"){
+         char newVal = EEPROM.read(TWO_MINUTES);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(TWO_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B2interval"){
+          char newVal = EEPROM.read(TWO_PERIOD);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(TWO_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B2count"){
+          char newVal = EEPROM.read(BAL2);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 89;}
+          EEPROM.write(BAL2, (char)newVal);
+        }else if(currentMenu.getName() == "B3pills"){
+          char newVal = EEPROM.read(THREE_PILLS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 10;}
+          EEPROM.write(THREE_PILLS, (char)newVal);
+        }else if(currentMenu.getName() == "B3hours"){
+         char newVal = EEPROM.read(THREE_HOURS);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 23;}
+          EEPROM.write(THREE_HOURS, (char)newVal);
+        }else if(currentMenu.getName() == "B3minutes"){
+         char newVal = EEPROM.read(THREE_MINUTES);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(THREE_MINUTES, (char)newVal);
+        }else if(currentMenu.getName() == "B3interval"){
+          char newVal = EEPROM.read(THREE_PERIOD);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 59;}
+          EEPROM.write(THREE_PERIOD, (char)newVal);
+        }else if(currentMenu.getName() == "B3count"){
+          char newVal = EEPROM.read(BAL3);
+          newVal = newVal - 1;
+          if(newVal < 0){ newVal = 89;}
+          EEPROM.write(BAL3, (char)newVal);
+        }
+       break;
+       }
+     case btnSELECT:
+       {
+        if(currentMenu.moveDown()){
+          menu.moveDown();
+        }else{
+          menu.use();
+        }
+       break;
+       }
+     case btnNONE:
+       {
+       break;
+       }
+   }
+}
+ 
+//Functions handling alarms.
+void setAlarm(int bottle, char hours, char minutes, char interval){
+  if(bottle == 1)
+  {
+    hourB1 =  houra1 = houra2 = houra3 =hours;
+    minsB1 = minutes;
+    
+    minsa1 = minsB1 + interval;
+    minsa2 = minsa1 + interval;
+    minsa3 = minsa2 + interval;
+  
+  }
+  else if(bottle == 2)
+  {
+    
+ 
+    hourB2 =  hourb1 = hourb2 = hourb3 =hours;
+    minsB2 = minutes;
+    
+    minsb1 = minsB2 + interval;
+    minsb2 = minsb1 + interval;
+    minsb3 = minsb2 + interval;
+    
+  }
+  else if(bottle == 3)
+  {
+    
+    hourB3 =  hourc1 = hourc2 = hourc3 =hours;
+    minsB3 = minutes;
+    
+    minsc1 = minsB3 + interval;
+    minsc2 = minsc1 + interval;
+    minsc3 = minsc2 + interval;
+  }
+}
+ 
+void checkAlarms(){
+  
+    if(hour == hourB1 && minute == minsB1 && second == 0)
+    {
+      b1=true;
+      digitalWrite(7, HIGH);
+      //data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+      //Serial.println(data);
+    }
+    if(hour == hourB2 && minute == minsB2 && second == 0)
+    {
+      digitalWrite(5, HIGH);
+       b2=true;
+      //data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+      //Serial.println(data);
+    }
+    if(hour == hourB3 && minute == minsB3 && second == 0)
+    {
+       b3=true;
+      digitalWrite(3, HIGH);
+      //data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+     //Serial.println(data);
+    }  
+  //---------------------------------------------------------------
+ 
+ if(hour == houra1 && minute == minsa1 && second == 0)
+  {
+    if(b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(1) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+  
+    }
+    if(!b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);     
+    }
+  }
+  if(hour == houra2 && minute == minsa2 && second == 0)
+  {
+    if(b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(1) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);
+    }
+    if(!b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+  
+    } 
+  }
+  if(hour == houra3 && minute == minsa3 && second == 0)
+  {
+    if(b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(1) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3)); 
+    Serial.println(data);
+    }
+    else if(!b1)
+    {
+    data = "p1=" +String(1) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }
+  }
+  
+ //---------------------------------------------------------------   
+if(hour == hourb1 && minute == minsb1 && second == 0)
+{
+    if(b2)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(1) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+    Serial.println(data); 
+    }
+    else if(!b2)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }  
+    
+}
+  if(hour == hourb2 && minute == minsb2 && second == 0)
+  {
+     if(b2)
+     {
+     data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(1) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3)); 
+     Serial.println(data);  
+     }
+     else if(!b2)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }  
+  }
+  if(hour == hourb3 && minute == minsb3 && second == 0)
+  {
+       if(b2)
+       {
+       data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(1) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+       Serial.println(data);
+       }
+       else if(!b2)
+      {
+      data = "p1=" +String(0) + "&p2=" + String(1) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+      Serial.println(data);   
+      }  
+       
+    }
+ //---------------------------------------------------------------   
+if(hour == hourc1 && minute == minsc1 && second == 0)
+{
+     if(b3)
+     {
+     data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(1) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3)); 
+     Serial.println(data); 
+     }
+     else if(!b3)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }  
+ }
+  if(hour == hourc2 && minute == minsc2 && second == 0)
+  {
+      if(b3)
+      {
+      data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(1) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+      Serial.println(data); 
+      }
+    else if(!b3)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }  
+    }
+  if(hour == hourc3 && minute == minsc3 && second == 0)
+  {
+     if(b3)
+     {
+     data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(1) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3)); 
+     Serial.println(data); 
+     }
+    else if(!b3)
+    {
+    data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(1)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));  
+    Serial.println(data);   
+    }  
+    }
+  //---------------------------------------------------------------  
+}
+ 
+//Helper functions for clock.
+byte decToBcd(byte val) {return ((val/10*16) + (val%10));}
+byte bcdToDec(byte val) {return ((val/16*10) + (val%16));}
+ 
+// Set the time in the RTM.
+void setTime() {
+  // The following codes transmits the data to the RTC
+  Wire.beginTransmission(DS1307);
+  Wire.write(byte(0));
+  Wire.write(decToBcd(second));
+  Wire.write(decToBcd(minute));
+  Wire.write(decToBcd(hour));
+  Wire.write(decToBcd(weekday));
+  Wire.write(decToBcd(monthday));
+  Wire.write(decToBcd(month));
+  Wire.write(decToBcd(year));
+  Wire.write(byte(0));
+  Wire.endTransmission();
+  // Ends transmission of data
+}
+ 
+//Read time from RTM.
+void readTime() {
+  Wire.beginTransmission(DS1307);
+  Wire.write(byte(0));
+  Wire.endTransmission();
+  Wire.requestFrom(DS1307, 7);
+  second = bcdToDec(Wire.read());
+  minute = bcdToDec(Wire.read());
+  hour = bcdToDec(Wire.read());
+  weekday = bcdToDec(Wire.read());
+  monthday = bcdToDec(Wire.read());
+  month = bcdToDec(Wire.read());
+  year = bcdToDec(Wire.read());
+}
+ 
+//Print time.
+void printTime(){
+  lcd.setCursor(0,0);
+  lcd.print("    ");
+  if (hour < 10){lcd.print("0");}
+  lcd.print(hour, DEC);
+  lcd.print(":");
+  if (minute < 10){lcd.print("0");}
+  lcd.print(minute, DEC);
+  lcd.print(":");
+  if (second < 10){lcd.print("0");}
+  lcd.print(second, DEC);
+  lcd.print("    ");
+}
+ 
+//Print a number.
+void printNumber(int number){
+  lcd.setCursor(0,0);
+  lcd.print("      ");
+  if(number/10 == 0){
+    lcd.print("0");
+  }else{
+    lcd.print(" ");
+  }
+  lcd.print(number);
+  lcd.print("       ");
+}
+ 
+//Menu callback functions.
+//Navigation controls.
+void menuChanged(MenuChangeEvent changed){
+  MenuItem newMenuItem=changed.to; //get the destination menu
+  lcd.setCursor(0,1); //set the start position for lcd printing to the second row
+ 
+  if(newMenuItem.getName()== menu.getRoot()){
+      lcd.print("                ");
+  }else if (newMenuItem.getName()=="setupMode"){
+      lcd.print("ENTER SETUP MODE");
+  }else if (newMenuItem.getName()=="setupHours"){
+      lcd.print("Set hour.       ");
+  }else if (newMenuItem.getName()=="setupMinutes"){
+      lcd.print("Set minute.     ");
+  }else if (newMenuItem.getName()=="setupDispenser"){
+      lcd.print("Setup Dispenser.  ");
+  }else if (newMenuItem.getName()=="B1Dispenser"){
+      lcd.print("B1 dispenser.    ");
+  }else if (newMenuItem.getName()=="B2Dispenser"){
+      lcd.print("B2 dispenser.    ");
+  }else if (newMenuItem.getName()=="B3Dispenser"){
+      lcd.print("B3 dispenser.    ");
+  }else if (newMenuItem.getName()=="B1hours"){
+      lcd.print("B1 hours.    ");
+  }else if (newMenuItem.getName()=="B1minutes"){
+      lcd.print("B1 minutes.    ");
+  }else if (newMenuItem.getName()=="B1interval"){
+      lcd.print("B1 interval.    ");
+  }else if (newMenuItem.getName()=="B1pills"){
+      lcd.print("B1 pill number. ");
+  }else if (newMenuItem.getName()=="B1count"){
+      lcd.print("B1 pill count. ");
+  }else if (newMenuItem.getName()=="B2interval"){
+      lcd.print("B2 interval.    ");
+  }else if (newMenuItem.getName()=="B2hours"){
+      lcd.print("B2 hours.    ");
+  }else if (newMenuItem.getName()=="B2minutes"){
+      lcd.print("B2 minutes.    ");
+  }else if (newMenuItem.getName()=="B2pills"){
+      lcd.print("B2 pill number. ");
+  }else if (newMenuItem.getName()=="B2count"){
+      lcd.print("B2 pill count. ");
+  }else if (newMenuItem.getName()=="B3hours"){
+      lcd.print("B3 hours.    ");
+  }else if (newMenuItem.getName()=="B3minutes"){
+      lcd.print("B3 minutes.    ");
+  }else if (newMenuItem.getName()=="B3interval"){
+      lcd.print("B3 interval.    ");
+  }else if (newMenuItem.getName()=="B3pills"){
+      lcd.print("B3 pill number. ");
+  }else if (newMenuItem.getName()=="B3count"){
+      lcd.print("B3 pill count. ");
+  }
+}
+ 
+//Usage controls.
+void menuUsed(MenuUseEvent used){
+  menu.toRoot();  //back to Main
+}
+ 
+//Root menu action.
+void mainMenuAction(){
+  //Read values of photoresistors.
+  bottle1 = digitalRead(6);
+  bottle2 = digitalRead(4);
+  bottle3 = digitalRead(2);
+ 
+  //Find out which bottle(s) are out of the box, print instructions.
+  if(bottle1 == LOW)
+  {
+    b1 = false;
+    digitalWrite(7, LOW);
+    char hours = EEPROM.read(ONE_HOURS);
+    char minutes = EEPROM.read(ONE_MINUTES);
+    char interval = EEPROM.read(ONE_PERIOD);
+    curr = 1;
+    printInstructions(EEPROM.read(ONE_PILLS), hours, minutes);
+    setAlarm(1,hours,minutes,interval);
+    char newVal = EEPROM.read(BAL1);
+    newVal = newVal - 1;
+    EEPROM.write(BAL1, (char)newVal);
+    //data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+    //Serial.println(data);
+    digitalWrite(A1,HIGH);
+    delay(2000);
+    digitalWrite(A1,LOW);
+  } 
+  else if(bottle2 == LOW)
+  {
+    b2 = false;
+    digitalWrite(5, LOW);
+    curr = 2;
+    char hours = EEPROM.read(TWO_HOURS);
+    char minutes = EEPROM.read(TWO_MINUTES);
+    char interval = EEPROM.read(TWO_PERIOD);
+    printInstructions(EEPROM.read(TWO_PILLS), hours, minutes);
+    setAlarm(2,hours,minutes,interval);
+    char newVal = EEPROM.read(BAL2);
+    newVal = newVal - 1;
+    EEPROM.write(BAL2, (char)newVal);
+    //data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+    //Serial.println(data);
+    digitalWrite(A2,HIGH);
+    delay(2000);
+    digitalWrite(A2,LOW);
+  }
+  else if(bottle3 == LOW)
+  {
+    b3 = false;
+    curr = 3;
+    digitalWrite(3, LOW);
+    char hours = EEPROM.read(THREE_HOURS);
+    char minutes = EEPROM.read(THREE_MINUTES);
+    char interval = EEPROM.read(THREE_PERIOD);
+    printInstructions(EEPROM.read(THREE_PILLS), hours, minutes);
+    setAlarm(3,hours,minutes,interval);
+   char newVal = EEPROM.read(BAL3);
+    newVal = newVal - 1;
+    EEPROM.write(BAL3, (char)newVal);
+    //data = "p1=" +String(0) + "&p2=" + String(0) + "&p3=" + String(0)+ "&t1=" +String(0) + "&t2=" + String(0) + "&t3=" + String(0) + "&balance1=" +String(EEPROM.read(BAL1)) + "&balance2=" + String(EEPROM.read(BAL2)) + "&balance3=" + String(EEPROM.read(BAL3));
+    //Serial.println(data);
+    digitalWrite(A3,HIGH);
+    delay(2000);
+    digitalWrite(A3,LOW);
+  }else{
+    if(lastBottle != 0){
+      lcd.clear();
+      lastBottle = 0;
+    }
+    printTime();
+  }
+}
+ 
+//Print instructions for each bottle.
+void printInstructions(int pills, int hours, int minutes){
+  //Don't clear if bottle hasn't changed.
+  if(lastBottle != curr){
+    lcd.clear();
+  }
+  lastBottle = curr;
+  bottleReset = curr;
+  lcd.setCursor(0,0);
+  lcd.print("Take ");
+  lcd.print(pills);
+  lcd.print(" pill(s)");
+  lcd.setCursor(0,1);
+  lcd.print("this");
+  lcd.setCursor(5,1);
+  lcd.print(hours);
+  lcd.setCursor(7,1);
+  lcd.print(":");
+  lcd.setCursor(8,1);
+  lcd.print(minutes);
+  lcd.setCursor(11,1);
+  lcd.print("Time.");
+  return;
+}
